@@ -66,12 +66,12 @@ jobs:
               cd dist/flink-dist/target
               sudo tar cvfz ~/lib/flink-dist-$CIRCLE_SHA1.tgz flink-*-bin/flink-*/**/*
         - run: sudo pip install awscli
-        - run: aws --region eu-west-1 s3 cp flink-dist-$CIRCLE_SHA1.tgz $S3_OUTPUT_PATH/1.4.1/flink-dist.tgz
+        - run: aws --region eu-west-1 s3 cp flink-dist-$CIRCLE_SHA1.tgz $S3_OUTPUT_PATH/1.4.1-KPL-0.12.6/flink-dist.tgz
         - run:
             name: upload kinesis connector
             command: |
               cd dist/flink-connectors/flink-connector-kinesis
-              aws --region eu-west-1 s3 cp target/ $S3_OUTPUT_PATH/1.4.1/ --recursive --include "flink-connector-kinesis*.jar" --exclude "*-tests.jar"
+              aws --region eu-west-1 s3 cp target/ $S3_OUTPUT_PATH/1.4.1-KPL-0.12.6/ --recursive --include "flink-connector-kinesis*.jar" --exclude "*-tests.jar"
 
 workflows:
   version: 2
@@ -81,11 +81,11 @@ workflows:
           context: org-global
           filters:
             branches:
-              only: release-tag-1.4.1
+              only: release-tag-1.4.1-KPL-0.12.6
       - package:
           context: org-global
           requires:
             - build
           filters:
             branches:
-              only: release-tag-1.4.1
+              only: release-tag-1.4.1-KPL-0.12.6
