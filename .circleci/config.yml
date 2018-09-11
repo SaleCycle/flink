@@ -1,0 +1,91 @@
+# Java Maven CircleCI 2.0 configuration file
+#
+# Check https://circleci.com/docs/2.0/language-java/ for more details
+#
+version: 2
+jobs:
+  build:
+    docker:
+    # specify the version you desire here
+    - image: circleci/openjdk:8-jdk
+
+    # Specify service dependencies here if necessary
+    # CircleCI maintains a library of pre-built images
+    # documented at https://circleci.com/docs/2.0/circleci-images/
+    # - image: circleci/postgres:9.4
+
+    working_directory: ~/repo
+
+    environment:
+      # Customize the JVM maximum heap limit
+      MAVEN_OPTS: -Xmx3200m
+
+    steps:
+    - checkout
+    # this image installs maven 3.5.2 but Flink has an issue with maven from 3.3 because of a change to the shading plugin
+    - run:
+        name: install maven 3.2.5
+        command: |
+          sudo rm -r /opt/apache-maven*
+          sudo curl --silent --show-error --location --fail --retry 3 --output /tmp/apache-maven.tar.gz https://www.apache.org/dist/maven/maven-3/3.2.5/binaries/apache-maven-3.2.5-bin.tar.gz && \
+          sudo tar xf /tmp/apache-maven.tar.gz -C /opt/ && \
+          sudo rm /tmp/apache-maven.tar.gz && \
+          sudo ln -s /opt/apache-maven-* /opt/apache-maven && \
+          /opt/apache-maven/bin/mvn -version
+
+    # Download and cache dependencies
+    - restore_cache:
+        keys:
+        - v1-dependencies-{{ checksum "pom.xml" }}
+        # fallback to using the latest cache if no exact match is found
+        - v1-dependencies-
+
+    - run: mvn clean package -DskipTests -Dmaven.javadoc.skip=true -Dcheckstyle.skip=true -Pinclude-kinesis
+
+    - save_cache:
+        paths:
+        - ~/.m2
+        key: v1-dependencies-{{ checksum "pom.xml" }}
+
+    - persist_to_workspace:
+        root: .
+        paths:
+        - ./flink-connectors/flink-connector-kinesis/target/flink-connector-kinesis*.jar
+        - ./flink-dist/target/flink-*-bin/
+
+  package:
+    docker:
+    - image: circleci/python:3.4
+    working_directory: ~/lib
+    steps:
+    - attach_workspace:
+        at: dist
+    - run:
+        name: package distribution
+        command: |
+          cd dist/flink-dist/target
+          sudo tar cvfz ~/lib/flink-dist-$CIRCLE_SHA1.tgz flink-*-bin/flink-*/**/*
+    - run: sudo pip install awscli
+    - run: aws --region eu-west-1 s3 cp flink-dist-$CIRCLE_SHA1.tgz $S3_OUTPUT_PATH/1.6.0/flink-dist.tgz
+    - run:
+        name: upload kinesis connector
+        command: |
+          cd dist/flink-connectors/flink-connector-kinesis
+          aws --region eu-west-1 s3 cp target/ $S3_OUTPUT_PATH/1.6.0/ --recursive --include "flink-connector-kinesis*.jar" --exclude "*-tests.jar"
+
+workflows:
+  version: 2
+  build_release:
+    jobs:
+    - build:
+        context: org-global
+        filters:
+          branches:
+            only: release-tag-1.6.0
+    - package:
+        context: org-global
+        requires:
+        - build
+        filters:
+          branches:
+            only: release-tag-1.6.0
