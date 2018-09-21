@@ -40,7 +40,7 @@ jobs:
         # fallback to using the latest cache if no exact match is found
         - v1-dependencies-
 
-    - run: mvn clean package -DskipTests -Dmaven.javadoc.skip=true -Dcheckstyle.skip=true -Pinclude-kinesis
+    - run: mvn clean package -DskipTests -Dmaven.javadoc.skip=true -Dcheckstyle.skip=true -Dhadoop.version=2.6.1 -Pinclude-kinesis
 
     - save_cache:
         paths:
