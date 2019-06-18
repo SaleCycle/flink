@@ -34,9 +34,9 @@ under the License.
 	<name>flink-connector-kinesis</name>
 	<properties>
 		<aws.sdk.version>1.11.319</aws.sdk.version>
-		<aws.kinesis-kcl.version>1.9.0</aws.kinesis-kcl.version>
-		<aws.kinesis-kpl.version>0.12.9</aws.kinesis-kpl.version>
-		<aws.dynamodbstreams-kinesis-adapter.version>1.4.0</aws.dynamodbstreams-kinesis-adapter.version>
+		<aws.sdk2.version>2.5.10</aws.sdk2.version>
+		<aws.kinesis-kcl.version>2.2.0</aws.kinesis-kcl.version>
+		<aws.kinesis-kpl.version>0.12.11</aws.kinesis-kpl.version>
 	</properties>
 
 	<packaging>jar</packaging>
@@ -100,15 +100,23 @@ under the License.
 			Flink includes the "flink-connector-kinesis" only as an optional dependency for that reason.
 		-->
 		<dependency>
-			<groupId>com.amazonaws</groupId>
-			<artifactId>aws-java-sdk-kinesis</artifactId>
-			<version>${aws.sdk.version}</version>
+			<groupId>software.amazon.awssdk</groupId>
+			<artifactId>kinesis</artifactId>
+			<version>${aws.sdk2.version}</version>
 		</dependency>
 
+		<!-- https://mvnrepository.com/artifact/software.amazon.awssdk/apache-client -->
 		<dependency>
-			<groupId>com.amazonaws</groupId>
-			<artifactId>aws-java-sdk-sts</artifactId>
-			<version>${aws.sdk.version}</version>
+			<groupId>software.amazon.awssdk</groupId>
+			<artifactId>apache-client</artifactId>
+			<version>${aws.sdk2.version}</version>
+		</dependency>
+
+
+		<dependency>
+			<groupId>software.amazon.awssdk</groupId>
+			<artifactId>sts</artifactId>
+			<version>${aws.sdk2.version}</version>
 		</dependency>
 
 		<dependency>
@@ -119,6 +127,12 @@ under the License.
 
 		<dependency>
 			<groupId>com.amazonaws</groupId>
+			<artifactId>aws-java-sdk-sts</artifactId>
+			<version>${aws.sdk.version}</version>
+		</dependency>
+
+		<dependency>
+			<groupId>software.amazon.kinesis</groupId>
 			<artifactId>amazon-kinesis-client</artifactId>
 			<version>${aws.kinesis-kcl.version}</version>
 			<!--
@@ -127,28 +141,11 @@ under the License.
 			-->
 			<exclusions>
 				<exclusion>
-					<groupId>com.amazonaws</groupId>
-					<artifactId>aws-java-sdk-cloudwatch</artifactId>
+					<groupId>software.amazon.awssdk</groupId>
+					<artifactId>cloudwatch</artifactId>
 				</exclusion>
 			</exclusions>
 		</dependency>
-
-		<dependency>
-			<groupId>com.amazonaws</groupId>
-			<artifactId>dynamodb-streams-kinesis-adapter</artifactId>
-			<version>${aws.dynamodbstreams-kinesis-adapter.version}</version>
-			<exclusions>
-				<exclusion>
-					<groupId>com.amazonaws</groupId>
-					<artifactId>aws-java-sdk-cloudwatch</artifactId>
-				</exclusion>
-				<exclusion>
-					<groupId>com.fasterxml.jackson.core</groupId>
-					<artifactId>jackson-databind</artifactId>
-				</exclusion>
-			</exclusions>
-		</dependency>
-
 	</dependencies>
 
 	<build>

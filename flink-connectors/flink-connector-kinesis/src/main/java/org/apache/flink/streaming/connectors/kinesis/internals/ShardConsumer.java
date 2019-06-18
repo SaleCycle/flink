@@ -27,22 +27,23 @@ import org.apache.flink.streaming.connectors.kinesis.model.StreamShardHandle;
 import org.apache.flink.streaming.connectors.kinesis.proxy.KinesisProxyInterface;
 import org.apache.flink.streaming.connectors.kinesis.serialization.KinesisDeserializationSchema;
 
-import com.amazonaws.services.kinesis.clientlibrary.types.UserRecord;
-import com.amazonaws.services.kinesis.model.ExpiredIteratorException;
-import com.amazonaws.services.kinesis.model.GetRecordsResult;
-import com.amazonaws.services.kinesis.model.Record;
-import com.amazonaws.services.kinesis.model.ShardIteratorType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import software.amazon.awssdk.services.kinesis.model.ExpiredIteratorException;
+import software.amazon.awssdk.services.kinesis.model.GetRecordsResponse;
+import software.amazon.awssdk.services.kinesis.model.ShardIteratorType;
+import software.amazon.kinesis.retrieval.AggregatorUtil;
+import software.amazon.kinesis.retrieval.KinesisClientRecord;
 
 import java.io.IOException;
 import java.math.BigInteger;
 import java.nio.ByteBuffer;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
-import java.util.Date;
+import java.time.Instant;
 import java.util.List;
 import java.util.Properties;
+import java.util.stream.Collectors;
 
 import static org.apache.flink.streaming.connectors.kinesis.model.SentinelSequenceNumber.isSentinelSequenceNumber;
 import static org.apache.flink.util.Preconditions.checkArgument;
@@ -55,6 +56,8 @@ import static org.apache.flink.util.Preconditions.checkNotNull;
 public class ShardConsumer<T> implements Runnable {
 
 	private static final Logger LOG = LoggerFactory.getLogger(ShardConsumer.class);
+
+	private static final AggregatorUtil aggregatorUtil = new AggregatorUtil();
 
 	// AWS Kinesis has a read limit of 2 Mb/sec
 	// https://docs.aws.amazon.com/kinesis/latest/APIReference/API_GetRecords.html
@@ -78,7 +81,7 @@ public class ShardConsumer<T> implements Runnable {
 
 	private SequenceNumber lastSequenceNum;
 
-	private Date initTimestamp;
+	private Instant initTimestamp;
 
 	/**
 	 * Creates a shard consumer.
@@ -128,11 +131,11 @@ public class ShardConsumer<T> implements Runnable {
 				String format = consumerConfig.getProperty(ConsumerConfigConstants.STREAM_TIMESTAMP_DATE_FORMAT,
 					ConsumerConfigConstants.DEFAULT_STREAM_TIMESTAMP_DATE_FORMAT);
 				SimpleDateFormat customDateFormat = new SimpleDateFormat(format);
-				this.initTimestamp = customDateFormat.parse(timestamp);
+				this.initTimestamp = customDateFormat.parse(timestamp).toInstant();
 			} catch (IllegalArgumentException | NullPointerException exception) {
 				throw new IllegalArgumentException(exception);
 			} catch (ParseException exception) {
-				this.initTimestamp = new Date((long) (Double.parseDouble(timestamp) * 1000));
+				this.initTimestamp = Instant.ofEpochMilli((long) (Double.parseDouble(timestamp) * 1000));
 			}
 		} else {
 			this.initTimestamp = null;
@@ -205,23 +208,23 @@ public class ShardConsumer<T> implements Runnable {
 						sequenceNumber.getSequenceNumber());
 
 		// get only the last aggregated record
-		GetRecordsResult getRecordsResult = getRecords(itrForLastAggregatedRecord, 1);
+		GetRecordsResponse getRecordsResponse = getRecords(itrForLastAggregatedRecord, 1);
 
-		List<UserRecord> fetchedRecords = deaggregateRecords(
-				getRecordsResult.getRecords(),
-				subscribedShard.getShard().getHashKeyRange().getStartingHashKey(),
-				subscribedShard.getShard().getHashKeyRange().getEndingHashKey());
+		List<KinesisClientRecord> fetchedRecords = deaggregateRecords(
+				getRecordsResponse.records().stream().map(KinesisClientRecord::fromRecord).collect(Collectors.toList()),
+				subscribedShard.getShard().hashKeyRange().startingHashKey(),
+				subscribedShard.getShard().hashKeyRange().endingHashKey());
 
 		long lastSubSequenceNum = sequenceNumber.getSubSequenceNumber();
-		for (UserRecord record : fetchedRecords) {
+		for (KinesisClientRecord record : fetchedRecords) {
 			// we have found a dangling sub-record if it has a larger subsequence number
 			// than our last sequence number; if so, collect the record and update state
-			if (record.getSubSequenceNumber() > lastSubSequenceNum) {
+			if (record.subSequenceNumber() > lastSubSequenceNum) {
 				deserializeRecordForCollectionAndUpdateState(record);
 			}
 		}
 
-		return getRecordsResult.getNextShardIterator();
+		return getRecordsResponse.nextShardIterator();
 	}
 
 	@SuppressWarnings("unchecked")
@@ -240,28 +243,29 @@ public class ShardConsumer<T> implements Runnable {
 					break;
 				} else {
 					shardMetricsReporter.setMaxNumberOfRecordsPerFetch(maxNumberOfRecordsPerFetch);
-					GetRecordsResult getRecordsResult = getRecords(nextShardItr, maxNumberOfRecordsPerFetch);
+					GetRecordsResponse getRecordsResponse = getRecords(nextShardItr, maxNumberOfRecordsPerFetch);
 
-					List<Record> aggregatedRecords = getRecordsResult.getRecords();
+					List<KinesisClientRecord> aggregatedRecords = getRecordsResponse.records().stream()
+						.map(KinesisClientRecord::fromRecord).collect(Collectors.toList());
 					int numberOfAggregatedRecords = aggregatedRecords.size();
 					shardMetricsReporter.setNumberOfAggregatedRecords(numberOfAggregatedRecords);
 
 					// each of the Kinesis records may be aggregated, so we must deaggregate them before proceeding
-					List<UserRecord> fetchedRecords = deaggregateRecords(
+					List<KinesisClientRecord> fetchedRecords = deaggregateRecords(
 						aggregatedRecords,
-						subscribedShard.getShard().getHashKeyRange().getStartingHashKey(),
-						subscribedShard.getShard().getHashKeyRange().getEndingHashKey());
+						subscribedShard.getShard().hashKeyRange().startingHashKey(),
+						subscribedShard.getShard().hashKeyRange().endingHashKey());
 
 					long recordBatchSizeBytes = 0L;
-					for (UserRecord record : fetchedRecords) {
-						recordBatchSizeBytes += record.getData().remaining();
+					for (KinesisClientRecord record : fetchedRecords) {
+						recordBatchSizeBytes += record.data().remaining();
 						deserializeRecordForCollectionAndUpdateState(record);
 					}
 
 					int numberOfDeaggregatedRecords = fetchedRecords.size();
 					shardMetricsReporter.setNumberOfDeaggregatedRecords(numberOfDeaggregatedRecords);
 
-					nextShardItr = getRecordsResult.getNextShardIterator();
+					nextShardItr = getRecordsResponse.nextShardIterator();
 
 					long adjustmentEndTimeNanos = adjustRunLoopFrequency(processingStartTimeNanos, System.nanoTime());
 					long runLoopTimeNanos = adjustmentEndTimeNanos - processingStartTimeNanos;
@@ -347,26 +351,26 @@ public class ShardConsumer<T> implements Runnable {
 	 * @param record record to deserialize and collect
 	 * @throws IOException
 	 */
-	private void deserializeRecordForCollectionAndUpdateState(UserRecord record)
+	private void deserializeRecordForCollectionAndUpdateState(KinesisClientRecord record)
 		throws IOException {
-		ByteBuffer recordData = record.getData();
+		ByteBuffer recordData = record.data();
 
 		byte[] dataBytes = new byte[recordData.remaining()];
 		recordData.get(dataBytes);
 
-		final long approxArrivalTimestamp = record.getApproximateArrivalTimestamp().getTime();
+		final long approxArrivalTimestamp = record.approximateArrivalTimestamp().toEpochMilli();
 
 		final T value = deserializer.deserialize(
 			dataBytes,
-			record.getPartitionKey(),
-			record.getSequenceNumber(),
+			record.partitionKey(),
+			record.sequenceNumber(),
 			approxArrivalTimestamp,
 			subscribedShard.getStreamName(),
-			subscribedShard.getShard().getShardId());
+			subscribedShard.getShard().shardId());
 
-		SequenceNumber collectedSequenceNumber = (record.isAggregated())
-			? new SequenceNumber(record.getSequenceNumber(), record.getSubSequenceNumber())
-			: new SequenceNumber(record.getSequenceNumber());
+		SequenceNumber collectedSequenceNumber = (record.aggregated())
+			? new SequenceNumber(record.sequenceNumber(), record.subSequenceNumber())
+			: new SequenceNumber(record.sequenceNumber());
 
 		fetcherRef.emitRecordAndUpdateState(
 			value,
@@ -380,11 +384,11 @@ public class ShardConsumer<T> implements Runnable {
 	/**
 	 * Calls {@link KinesisProxyInterface#getRecords(String, int)}, while also handling unexpected
 	 * AWS {@link ExpiredIteratorException}s to assure that we get results and don't just fail on
-	 * such occasions. The returned shard iterator within the successful {@link GetRecordsResult} should
+	 * such occasions. The returned shard iterator within the successful {@link GetRecordsResponse} should
 	 * be used for the next call to this method.
 	 *
 	 * <p>Note: it is important that this method is not called again before all the records from the last result have been
-	 * fully collected with {@link ShardConsumer#deserializeRecordForCollectionAndUpdateState(UserRecord)}, otherwise
+	 * fully collected with {@link ShardConsumer#deserializeRecordForCollectionAndUpdateState(KinesisClientRecord)}, otherwise
 	 * {@link ShardConsumer#lastSequenceNum} may refer to a sub-record in the middle of an aggregated record, leading to
 	 * incorrect shard iteration if the iterator had to be refreshed.
 	 *
@@ -393,14 +397,14 @@ public class ShardConsumer<T> implements Runnable {
 	 * @return get records result
 	 * @throws InterruptedException
 	 */
-	private GetRecordsResult getRecords(String shardItr, int maxNumberOfRecords) throws Exception {
-		GetRecordsResult getRecordsResult = null;
-		while (getRecordsResult == null) {
+	private GetRecordsResponse getRecords(String shardItr, int maxNumberOfRecords) throws Exception {
+		GetRecordsResponse getRecordsResponse = null;
+		while (getRecordsResponse == null) {
 			try {
-				getRecordsResult = kinesis.getRecords(shardItr, maxNumberOfRecords);
+				getRecordsResponse = kinesis.getRecords(shardItr, maxNumberOfRecords);
 
 				// Update millis behind latest so it gets reported by the millisBehindLatest gauge
-				Long millisBehindLatest = getRecordsResult.getMillisBehindLatest();
+				Long millisBehindLatest = getRecordsResponse.millisBehindLatest();
 				if (millisBehindLatest != null) {
 					shardMetricsReporter.setMillisBehindLatest(millisBehindLatest);
 				}
@@ -416,11 +420,11 @@ public class ShardConsumer<T> implements Runnable {
 				}
 			}
 		}
-		return getRecordsResult;
+		return getRecordsResponse;
 	}
 
 	@SuppressWarnings("unchecked")
-	protected static List<UserRecord> deaggregateRecords(List<Record> records, String startingHashKey, String endingHashKey) {
-		return UserRecord.deaggregate(records, new BigInteger(startingHashKey), new BigInteger(endingHashKey));
+	protected static List<KinesisClientRecord> deaggregateRecords(List<KinesisClientRecord> records, String startingHashKey, String endingHashKey) {
+		return aggregatorUtil.deaggregate(records, new BigInteger(startingHashKey), new BigInteger(endingHashKey));
 	}
 }

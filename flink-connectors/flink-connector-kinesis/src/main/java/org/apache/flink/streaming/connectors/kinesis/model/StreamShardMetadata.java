@@ -26,7 +26,7 @@ import static org.apache.flink.util.Preconditions.checkNotNull;
 
 /**
  * A serializable representation of a AWS Kinesis Stream shard. It is basically a wrapper class around the information
- * disintegrated from {@link com.amazonaws.services.kinesis.model.Shard} and its nested classes. The disintegration
+ * disintegrated from {@link software.amazon.awssdk.services.kinesis.model.Shard} and its nested classes. The disintegration
  * is required to avoid being locked-in to a specific AWS SDK version in order to maintain the consumer's state
  * backwards compatibility.
  */

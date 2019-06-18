@@ -58,9 +58,6 @@ import org.apache.flink.streaming.util.CollectingSourceContext;
 
 import org.apache.flink.shaded.guava18.com.google.common.collect.Lists;
 
-import com.amazonaws.services.kinesis.model.HashKeyRange;
-import com.amazonaws.services.kinesis.model.SequenceNumberRange;
-import com.amazonaws.services.kinesis.model.Shard;
 import org.junit.Assert;
 import org.junit.Rule;
 import org.junit.Test;
@@ -71,6 +68,9 @@ import org.mockito.Mockito;
 import org.powermock.api.mockito.PowerMockito;
 import org.powermock.core.classloader.annotations.PrepareForTest;
 import org.powermock.modules.junit4.PowerMockRunner;
+import software.amazon.awssdk.services.kinesis.model.HashKeyRange;
+import software.amazon.awssdk.services.kinesis.model.SequenceNumberRange;
+import software.amazon.awssdk.services.kinesis.model.Shard;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -115,19 +115,19 @@ public class FlinkKinesisConsumerTest {
 		List<Tuple2<StreamShardMetadata, SequenceNumber>> globalUnionState = new ArrayList<>(4);
 		globalUnionState.add(Tuple2.of(
 			KinesisDataFetcher.convertToStreamShardMetadata(new StreamShardHandle("fakeStream",
-				new Shard().withShardId(KinesisShardIdGenerator.generateFromShardOrder(0)))),
+				Shard.builder().shardId(KinesisShardIdGenerator.generateFromShardOrder(0)).build())),
 			new SequenceNumber("1")));
 		globalUnionState.add(Tuple2.of(
 			KinesisDataFetcher.convertToStreamShardMetadata(new StreamShardHandle("fakeStream",
-				new Shard().withShardId(KinesisShardIdGenerator.generateFromShardOrder(1)))),
+				Shard.builder().shardId(KinesisShardIdGenerator.generateFromShardOrder(1)).build())),
 			new SequenceNumber("1")));
 		globalUnionState.add(Tuple2.of(
 			KinesisDataFetcher.convertToStreamShardMetadata(new StreamShardHandle("fakeStream",
-				new Shard().withShardId(KinesisShardIdGenerator.generateFromShardOrder(2)))),
+				Shard.builder().shardId(KinesisShardIdGenerator.generateFromShardOrder(2)).build())),
 			new SequenceNumber("1")));
 		globalUnionState.add(Tuple2.of(
 			KinesisDataFetcher.convertToStreamShardMetadata(new StreamShardHandle("fakeStream",
-				new Shard().withShardId(KinesisShardIdGenerator.generateFromShardOrder(3)))),
+				Shard.builder().shardId(KinesisShardIdGenerator.generateFromShardOrder(3)).build())),
 			new SequenceNumber("1")));
 
 		TestingListState<Tuple2<StreamShardMetadata, SequenceNumber>> listState = new TestingListState<>();
@@ -175,21 +175,21 @@ public class FlinkKinesisConsumerTest {
 		ArrayList<Tuple2<StreamShardMetadata, SequenceNumber>> initialState = new ArrayList<>(1);
 		initialState.add(Tuple2.of(
 			KinesisDataFetcher.convertToStreamShardMetadata(new StreamShardHandle("fakeStream1",
-				new Shard().withShardId(KinesisShardIdGenerator.generateFromShardOrder(0)))),
+				Shard.builder().shardId(KinesisShardIdGenerator.generateFromShardOrder(0)).build())),
 			new SequenceNumber("1")));
 
 		ArrayList<Tuple2<StreamShardMetadata, SequenceNumber>> expectedStateSnapshot = new ArrayList<>(3);
 		expectedStateSnapshot.add(Tuple2.of(
 			KinesisDataFetcher.convertToStreamShardMetadata(new StreamShardHandle("fakeStream1",
-				new Shard().withShardId(KinesisShardIdGenerator.generateFromShardOrder(0)))),
+				Shard.builder().shardId(KinesisShardIdGenerator.generateFromShardOrder(0)).build())),
 			new SequenceNumber("12")));
 		expectedStateSnapshot.add(Tuple2.of(
 			KinesisDataFetcher.convertToStreamShardMetadata(new StreamShardHandle("fakeStream1",
-				new Shard().withShardId(KinesisShardIdGenerator.generateFromShardOrder(1)))),
+				Shard.builder().shardId(KinesisShardIdGenerator.generateFromShardOrder(1)).build())),
 			new SequenceNumber("11")));
 		expectedStateSnapshot.add(Tuple2.of(
 			KinesisDataFetcher.convertToStreamShardMetadata(new StreamShardHandle("fakeStream1",
-				new Shard().withShardId(KinesisShardIdGenerator.generateFromShardOrder(2)))),
+				Shard.builder().shardId(KinesisShardIdGenerator.generateFromShardOrder(2)).build())),
 			new SequenceNumber("31")));
 
 		// ----------------------------------------------------------------------
@@ -461,7 +461,7 @@ public class FlinkKinesisConsumerTest {
 		List<StreamShardHandle> shards = new ArrayList<>();
 		shards.addAll(fakeRestoredState.keySet());
 		shards.add(new StreamShardHandle("fakeStream2",
-			new Shard().withShardId(KinesisShardIdGenerator.generateFromShardOrder(2))));
+			Shard.builder().shardId(KinesisShardIdGenerator.generateFromShardOrder(2)).build()));
 		when(mockedFetcher.discoverNewShardsToSubscribe()).thenReturn(shards);
 
 		// assume the given config is correct
@@ -479,7 +479,7 @@ public class FlinkKinesisConsumerTest {
 		consumer.run(Mockito.mock(SourceFunction.SourceContext.class));
 
 		fakeRestoredState.put(new StreamShardHandle("fakeStream2",
-				new Shard().withShardId(KinesisShardIdGenerator.generateFromShardOrder(2))),
+				Shard.builder().shardId(KinesisShardIdGenerator.generateFromShardOrder(2)).build()),
 			SentinelSequenceNumber.SENTINEL_EARLIEST_SEQUENCE_NUM.get());
 		for (Map.Entry<StreamShardHandle, SequenceNumber> restoredShard : fakeRestoredState.entrySet()) {
 			Mockito.verify(mockedFetcher).registerNewSubscribedShardState(
@@ -509,16 +509,19 @@ public class FlinkKinesisConsumerTest {
 		streamShardMetadata.setStartingSequenceNumber(startingSequenceNumber);
 		streamShardMetadata.setEndingSequenceNumber(endingSequenceNumber);
 
-		Shard shard = new Shard()
-			.withShardId(shardId)
-			.withParentShardId(parentShardId)
-			.withAdjacentParentShardId(adjacentParentShardId)
-			.withHashKeyRange(new HashKeyRange()
-				.withStartingHashKey(startingHashKey)
-				.withEndingHashKey(endingHashKey))
-			.withSequenceNumberRange(new SequenceNumberRange()
-				.withStartingSequenceNumber(startingSequenceNumber)
-				.withEndingSequenceNumber(endingSequenceNumber));
+		Shard shard = Shard.builder()
+			.shardId(shardId)
+			.parentShardId(parentShardId)
+			.adjacentParentShardId(adjacentParentShardId)
+			.hashKeyRange(HashKeyRange.builder()
+				.startingHashKey(startingHashKey)
+				.endingHashKey(endingHashKey)
+				.build())
+			.sequenceNumberRange(SequenceNumberRange.builder()
+				.startingSequenceNumber(startingSequenceNumber)
+				.endingSequenceNumber(endingSequenceNumber)
+				.build())
+			.build();
 		KinesisStreamShard kinesisStreamShard = new KinesisStreamShard(streamName, shard);
 
 		assertEquals(streamShardMetadata, KinesisStreamShard.convertToStreamShardMetadata(kinesisStreamShard));
@@ -575,9 +578,8 @@ public class FlinkKinesisConsumerTest {
 		final StreamShardHandle originalStreamShardHandle = fakeRestoredState.keySet().iterator().next();
 		final StreamShardHandle closedStreamShardHandle = new StreamShardHandle(originalStreamShardHandle.getStreamName(), originalStreamShardHandle.getShard());
 		// close the shard handle by setting an ending sequence number
-		final SequenceNumberRange sequenceNumberRange = new SequenceNumberRange();
-		sequenceNumberRange.setEndingSequenceNumber("1293844");
-		closedStreamShardHandle.getShard().setSequenceNumberRange(sequenceNumberRange);
+		final SequenceNumberRange sequenceNumberRange = SequenceNumberRange.builder().endingSequenceNumber("1293844").build();
+		closedStreamShardHandle.getShard().toBuilder().sequenceNumberRange(sequenceNumberRange);
 
 		shards.add(closedStreamShardHandle);
 
@@ -652,26 +654,26 @@ public class FlinkKinesisConsumerTest {
 		if (streamName.equals("fakeStream1") || streamName.equals("all")) {
 			fakeRestoredState.put(
 				new StreamShardHandle("fakeStream1",
-					new Shard().withShardId(KinesisShardIdGenerator.generateFromShardOrder(0))),
+					Shard.builder().shardId(KinesisShardIdGenerator.generateFromShardOrder(0)).build()),
 				new SequenceNumber(UUID.randomUUID().toString()));
 			fakeRestoredState.put(
 				new StreamShardHandle("fakeStream1",
-					new Shard().withShardId(KinesisShardIdGenerator.generateFromShardOrder(1))),
+					Shard.builder().shardId(KinesisShardIdGenerator.generateFromShardOrder(1)).build()),
 				new SequenceNumber(UUID.randomUUID().toString()));
 			fakeRestoredState.put(
 				new StreamShardHandle("fakeStream1",
-					new Shard().withShardId(KinesisShardIdGenerator.generateFromShardOrder(2))),
+					Shard.builder().shardId(KinesisShardIdGenerator.generateFromShardOrder(2)).build()),
 				new SequenceNumber(UUID.randomUUID().toString()));
 		}
 
 		if (streamName.equals("fakeStream2") || streamName.equals("all")) {
 			fakeRestoredState.put(
 				new StreamShardHandle("fakeStream2",
-					new Shard().withShardId(KinesisShardIdGenerator.generateFromShardOrder(0))),
+					Shard.builder().shardId(KinesisShardIdGenerator.generateFromShardOrder(0)).build()),
 				new SequenceNumber(UUID.randomUUID().toString()));
 			fakeRestoredState.put(
 				new StreamShardHandle("fakeStream2",
-					new Shard().withShardId(KinesisShardIdGenerator.generateFromShardOrder(1))),
+					Shard.builder().shardId(KinesisShardIdGenerator.generateFromShardOrder(1)).build()),
 				new SequenceNumber(UUID.randomUUID().toString()));
 		}
 
@@ -754,7 +756,7 @@ public class FlinkKinesisConsumerTest {
 			(streamShardHandle, i) -> {
 				// shardId-000000000000
 				return Integer.parseInt(
-					streamShardHandle.getShard().getShardId().substring("shardId-".length()));
+					streamShardHandle.getShard().shardId().substring("shardId-".length()));
 			});
 
 		sourceFunc.setPeriodicWatermarkAssigner(new TestTimestampExtractor(maxOutOfOrderness));
@@ -887,7 +889,7 @@ public class FlinkKinesisConsumerTest {
 			(streamShardHandle, i) -> {
 				// shardId-000000000000
 				return Integer.parseInt(
-					streamShardHandle.getShard().getShardId().substring("shardId-".length()));
+					streamShardHandle.getShard().shardId().substring("shardId-".length()));
 			});
 
 		sourceFunc.setPeriodicWatermarkAssigner(new TestTimestampExtractor(maxOutOfOrderness));

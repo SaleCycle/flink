@@ -23,33 +23,36 @@ import org.apache.flink.streaming.connectors.kinesis.model.StreamShardHandle;
 import org.apache.flink.streaming.connectors.kinesis.util.AWSUtil;
 import org.apache.flink.streaming.connectors.kinesis.util.KinesisConfigUtil;
 
-import com.amazonaws.AmazonServiceException;
-import com.amazonaws.ClientConfiguration;
-import com.amazonaws.ClientConfigurationFactory;
-import com.amazonaws.SdkClientException;
-import com.amazonaws.services.kinesis.AmazonKinesis;
-import com.amazonaws.services.kinesis.model.DescribeStreamRequest;
-import com.amazonaws.services.kinesis.model.DescribeStreamResult;
-import com.amazonaws.services.kinesis.model.ExpiredNextTokenException;
-import com.amazonaws.services.kinesis.model.GetRecordsRequest;
-import com.amazonaws.services.kinesis.model.GetRecordsResult;
-import com.amazonaws.services.kinesis.model.GetShardIteratorRequest;
-import com.amazonaws.services.kinesis.model.GetShardIteratorResult;
-import com.amazonaws.services.kinesis.model.InvalidArgumentException;
-import com.amazonaws.services.kinesis.model.LimitExceededException;
-import com.amazonaws.services.kinesis.model.ListShardsRequest;
-import com.amazonaws.services.kinesis.model.ListShardsResult;
-import com.amazonaws.services.kinesis.model.ProvisionedThroughputExceededException;
-import com.amazonaws.services.kinesis.model.ResourceInUseException;
-import com.amazonaws.services.kinesis.model.ResourceNotFoundException;
-import com.amazonaws.services.kinesis.model.Shard;
-import com.amazonaws.services.kinesis.model.ShardIteratorType;
-import com.amazonaws.services.kinesis.model.StreamStatus;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import software.amazon.awssdk.awscore.exception.AwsServiceException;
+import software.amazon.awssdk.core.client.config.ClientOverrideConfiguration;
+import software.amazon.awssdk.core.exception.NonRetryableException;
+import software.amazon.awssdk.core.exception.SdkClientException;
+import software.amazon.awssdk.core.exception.SdkServiceException;
+import software.amazon.awssdk.http.SdkHttpClient;
+import software.amazon.awssdk.http.apache.ApacheHttpClient;
+import software.amazon.awssdk.services.kinesis.KinesisClient;
+import software.amazon.awssdk.services.kinesis.model.DescribeStreamRequest;
+import software.amazon.awssdk.services.kinesis.model.DescribeStreamResponse;
+import software.amazon.awssdk.services.kinesis.model.ExpiredNextTokenException;
+import software.amazon.awssdk.services.kinesis.model.GetRecordsRequest;
+import software.amazon.awssdk.services.kinesis.model.GetRecordsResponse;
+import software.amazon.awssdk.services.kinesis.model.GetShardIteratorRequest;
+import software.amazon.awssdk.services.kinesis.model.GetShardIteratorResponse;
+import software.amazon.awssdk.services.kinesis.model.InvalidArgumentException;
+import software.amazon.awssdk.services.kinesis.model.LimitExceededException;
+import software.amazon.awssdk.services.kinesis.model.ListShardsRequest;
+import software.amazon.awssdk.services.kinesis.model.ListShardsResponse;
+import software.amazon.awssdk.services.kinesis.model.ResourceInUseException;
+import software.amazon.awssdk.services.kinesis.model.ResourceNotFoundException;
+import software.amazon.awssdk.services.kinesis.model.Shard;
+import software.amazon.awssdk.services.kinesis.model.ShardIteratorType;
+import software.amazon.awssdk.services.kinesis.model.StreamStatus;
 
 import javax.annotation.Nullable;
 
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.Iterator;
@@ -76,7 +79,7 @@ public class KinesisProxy implements KinesisProxyInterface {
 	private static final Logger LOG = LoggerFactory.getLogger(KinesisProxy.class);
 
 	/** The actual Kinesis client from the AWS SDK that we will be using to make calls. */
-	private final AmazonKinesis kinesisClient;
+	protected final KinesisClient kinesisClient;
 
 	/** Random seed used to calculate backoff jitter for Kinesis operations. */
 	private static final Random seed = new Random();
@@ -211,16 +214,18 @@ public class KinesisProxy implements KinesisProxyInterface {
 	}
 
 	/**
-	 * Create the Kinesis client, using the provided configuration properties and default {@link ClientConfiguration}.
+	 * Create the Kinesis client, using the provided configuration properties and default {@link ClientOverrideConfiguration}.
 	 * Derived classes can override this method to customize the client configuration.
 	 * @param configProps
 	 * @return
 	 */
-	protected AmazonKinesis createKinesisClient(Properties configProps) {
+	protected KinesisClient createKinesisClient(Properties configProps) {
 
-		ClientConfiguration awsClientConfig = new ClientConfigurationFactory().getConfig();
-		AWSUtil.setAwsClientConfigProperties(awsClientConfig, configProps);
-		return AWSUtil.createKinesisClient(configProps, awsClientConfig);
+		ClientOverrideConfiguration.Builder awsClientConfig = ClientOverrideConfiguration.builder();
+		AWSUtil.setAwsClientOverrideConfigurationProperties(awsClientConfig, configProps);
+		SdkHttpClient.Builder sdkHttpClient = ApacheHttpClient.builder();
+		AWSUtil.setSdkHttpClientConfigurationProperties(sdkHttpClient, configProps);
+		return AWSUtil.createKinesisClient(configProps, awsClientConfig, sdkHttpClient.build());
 	}
 
 	/**
@@ -237,18 +242,19 @@ public class KinesisProxy implements KinesisProxyInterface {
 	 * {@inheritDoc}
 	 */
 	@Override
-	public GetRecordsResult getRecords(String shardIterator, int maxRecordsToGet) throws InterruptedException {
-		final GetRecordsRequest getRecordsRequest = new GetRecordsRequest();
-		getRecordsRequest.setShardIterator(shardIterator);
-		getRecordsRequest.setLimit(maxRecordsToGet);
+	public GetRecordsResponse getRecords(String shardIterator, int maxRecordsToGet) throws InterruptedException {
+		final GetRecordsRequest getRecordsRequest = GetRecordsRequest.builder()
+			.shardIterator(shardIterator)
+			.limit(maxRecordsToGet)
+			.build();
 
-		GetRecordsResult getRecordsResult = null;
+		GetRecordsResponse getRecordsResponse = null;
 
 		int retryCount = 0;
-		while (retryCount <= getRecordsMaxRetries && getRecordsResult == null) {
+		while (retryCount <= getRecordsMaxRetries && getRecordsResponse == null) {
 			try {
-				getRecordsResult = kinesisClient.getRecords(getRecordsRequest);
-			} catch (SdkClientException ex) {
+				getRecordsResponse = kinesisClient.getRecords(getRecordsRequest);
+			} catch (software.amazon.awssdk.core.exception.SdkClientException ex) {
 				if (isRecoverableSdkClientException(ex)) {
 					long backoffMillis = fullJitterBackoff(
 						getRecordsBaseBackoffMillis, getRecordsMaxBackoffMillis, getRecordsExpConstant, retryCount++);
@@ -261,12 +267,12 @@ public class KinesisProxy implements KinesisProxyInterface {
 			}
 		}
 
-		if (getRecordsResult == null) {
+		if (getRecordsResponse == null) {
 			throw new RuntimeException("Retries exceeded for getRecords operation - all " + getRecordsMaxRetries +
 				" retry attempts failed.");
 		}
 
-		return getRecordsResult;
+		return getRecordsResponse;
 	}
 
 	/**
@@ -289,18 +295,20 @@ public class KinesisProxy implements KinesisProxyInterface {
 	 */
 	@Override
 	public String getShardIterator(StreamShardHandle shard, String shardIteratorType, @Nullable Object startingMarker) throws InterruptedException {
-		GetShardIteratorRequest getShardIteratorRequest = new GetShardIteratorRequest()
-			.withStreamName(shard.getStreamName())
-			.withShardId(shard.getShard().getShardId())
-			.withShardIteratorType(shardIteratorType);
+		GetShardIteratorRequest.Builder getShardIteratorRequest = GetShardIteratorRequest.builder()
+			.streamName(shard.getStreamName())
+			.shardId(shard.getShard().shardId())
+			.shardIteratorType(shardIteratorType);
 
 		switch (ShardIteratorType.fromValue(shardIteratorType)) {
 			case TRIM_HORIZON:
 			case LATEST:
 				break;
 			case AT_TIMESTAMP:
-				if (startingMarker instanceof Date) {
-					getShardIteratorRequest.setTimestamp((Date) startingMarker);
+				if (startingMarker instanceof Instant) {
+					getShardIteratorRequest.timestamp((Instant) startingMarker);
+				} else if (startingMarker instanceof Date) {
+					getShardIteratorRequest.timestamp(((Date) startingMarker).toInstant());
 				} else {
 					throw new IllegalArgumentException("Invalid object given for GetShardIteratorRequest() when ShardIteratorType is AT_TIMESTAMP. Must be a Date object.");
 				}
@@ -308,39 +316,35 @@ public class KinesisProxy implements KinesisProxyInterface {
 			case AT_SEQUENCE_NUMBER:
 			case AFTER_SEQUENCE_NUMBER:
 				if (startingMarker instanceof String) {
-					getShardIteratorRequest.setStartingSequenceNumber((String) startingMarker);
+					getShardIteratorRequest.startingSequenceNumber((String) startingMarker);
 				} else {
 					throw new IllegalArgumentException("Invalid object given for GetShardIteratorRequest() when ShardIteratorType is AT_SEQUENCE_NUMBER or AFTER_SEQUENCE_NUMBER. Must be a String.");
 				}
 		}
-		return getShardIterator(getShardIteratorRequest);
+		return getShardIterator(getShardIteratorRequest.build());
 	}
 
 	private String getShardIterator(GetShardIteratorRequest getShardIteratorRequest) throws InterruptedException {
-		GetShardIteratorResult getShardIteratorResult = null;
+		GetShardIteratorResponse getShardIteratorResponse = null;
 
 		int retryCount = 0;
-		while (retryCount <= getShardIteratorMaxRetries && getShardIteratorResult == null) {
+		while (retryCount <= getShardIteratorMaxRetries && getShardIteratorResponse == null) {
 			try {
-					getShardIteratorResult = kinesisClient.getShardIterator(getShardIteratorRequest);
-			} catch (AmazonServiceException ex) {
-				if (isRecoverableException(ex)) {
-					long backoffMillis = fullJitterBackoff(
-						getShardIteratorBaseBackoffMillis, getShardIteratorMaxBackoffMillis, getShardIteratorExpConstant, retryCount++);
-					LOG.warn("Got recoverable AmazonServiceException. Backing off for "
-						+ backoffMillis + " millis (" + ex.getClass().getName() + ": " + ex.getMessage() + ")");
-					Thread.sleep(backoffMillis);
-				} else {
-					throw ex;
-				}
+				getShardIteratorResponse = kinesisClient.getShardIterator(getShardIteratorRequest);
+			} catch (SdkServiceException ex) {
+				long backoffMillis = fullJitterBackoff(
+					getShardIteratorBaseBackoffMillis, getShardIteratorMaxBackoffMillis, getShardIteratorExpConstant, retryCount++);
+				LOG.warn("Got recoverable SdkServiceException. Backing off for "
+					+ backoffMillis + " millis (" + ex.getClass().getName() + ": " + ex.getMessage() + ")");
+				Thread.sleep(backoffMillis);
 			}
 		}
 
-		if (getShardIteratorResult == null) {
+		if (getShardIteratorResponse == null) {
 			throw new RuntimeException("Retries exceeded for getShardIterator operation - all " + getShardIteratorMaxRetries +
 				" retry attempts failed.");
 		}
-		return getShardIteratorResult.getShardIterator();
+		return getShardIteratorResponse.shardIterator();
 	}
 
 	/**
@@ -351,34 +355,7 @@ public class KinesisProxy implements KinesisProxyInterface {
 	 *         <code>false</code>
 	 */
 	protected boolean isRecoverableSdkClientException(SdkClientException ex) {
-		if (ex instanceof AmazonServiceException) {
-			return KinesisProxy.isRecoverableException((AmazonServiceException) ex);
-		}
-		// customizations may decide to retry other errors, such as read timeouts
-		return false;
-	}
-
-	/**
-	 * Determines whether the exception is recoverable using exponential-backoff.
-	 *
-	 * @param ex Exception to inspect
-	 * @return <code>true</code> if the exception can be recovered from, else
-	 *         <code>false</code>
-	 */
-	protected static boolean isRecoverableException(AmazonServiceException ex) {
-		if (ex.getErrorType() == null) {
-			return false;
-		}
-
-		switch (ex.getErrorType()) {
-			case Client:
-				return ex instanceof ProvisionedThroughputExceededException;
-			case Service:
-			case Unknown:
-				return true;
-			default:
-				return false;
-		}
+		return !(ex instanceof NonRetryableException);
 	}
 
 	private List<StreamShardHandle> getShardsOfStream(String streamName, @Nullable String lastSeenShardId) throws InterruptedException {
@@ -386,21 +363,21 @@ public class KinesisProxy implements KinesisProxyInterface {
 
 		// List Shards returns just the first 1000 shard entries. In order to read the entire stream,
 		// we need to use the returned nextToken to get additional shards.
-		ListShardsResult listShardsResult;
+		ListShardsResponse listShardsResponse;
 		String startShardToken = null;
 		do {
-			listShardsResult = listShards(streamName, lastSeenShardId, startShardToken);
-			if (listShardsResult == null) {
+			listShardsResponse = listShards(streamName, lastSeenShardId, startShardToken);
+			if (listShardsResponse == null) {
 				// In case we have exceptions while retrieving all shards, ensure that incomplete shard list is not returned.
 				// Hence clearing the incomplete shard list before returning it.
 				shardsOfStream.clear();
 				return shardsOfStream;
 			}
-			List<Shard> shards = listShardsResult.getShards();
+			List<Shard> shards = listShardsResponse.shards();
 			for (Shard shard : shards) {
 				shardsOfStream.add(new StreamShardHandle(streamName, shard));
 			}
-			startShardToken = listShardsResult.getNextToken();
+			startShardToken = listShardsResponse.nextToken();
 		} while (startShardToken != null);
 
 		return shardsOfStream;
@@ -418,19 +395,19 @@ public class KinesisProxy implements KinesisProxyInterface {
 	 * @param startShardId which shard to start with for this describe operation (earlier shard's infos will not appear in result)
 	 * @return the result of the describe stream operation
 	 */
-	private ListShardsResult listShards(String streamName, @Nullable String startShardId,
-																			@Nullable String startNextToken)
-			throws InterruptedException {
-		final ListShardsRequest listShardsRequest = new ListShardsRequest();
+	private ListShardsResponse listShards(String streamName, @Nullable String startShardId,
+											@Nullable String startNextToken)
+		throws InterruptedException {
+		final ListShardsRequest.Builder listShardsRequest = ListShardsRequest.builder();
 		if (startNextToken == null) {
-			listShardsRequest.setExclusiveStartShardId(startShardId);
-			listShardsRequest.setStreamName(streamName);
+			listShardsRequest.exclusiveStartShardId(startShardId);
+			listShardsRequest.streamName(streamName);
 		} else {
 			// Note the nextToken returned by AWS expires within 300 sec.
-			listShardsRequest.setNextToken(startNextToken);
+			listShardsRequest.nextToken(startNextToken);
 		}
 
-		ListShardsResult listShardsResults = null;
+		ListShardsResponse listShardsResults = null;
 
 		// Call ListShards, with full-jitter backoff (if we get LimitExceededException).
 		int retryCount = 0;
@@ -439,18 +416,18 @@ public class KinesisProxy implements KinesisProxyInterface {
 		while (retryCount <= listShardsMaxRetries && listShardsResults == null) { // retry until we get a result
 			try {
 
-				listShardsResults = kinesisClient.listShards(listShardsRequest);
+				listShardsResults = kinesisClient.listShards(listShardsRequest.build());
 			} catch (LimitExceededException le) {
 				long backoffMillis = fullJitterBackoff(
-						listShardsBaseBackoffMillis, listShardsMaxBackoffMillis, listShardsExpConstant, retryCount++);
-					LOG.warn("Got LimitExceededException when listing shards from stream " + streamName
-									+ ". Backing off for " + backoffMillis + " millis.");
+					listShardsBaseBackoffMillis, listShardsMaxBackoffMillis, listShardsExpConstant, retryCount++);
+				LOG.warn("Got LimitExceededException when listing shards from stream " + streamName
+					+ ". Backing off for " + backoffMillis + " millis.");
 				Thread.sleep(backoffMillis);
 			} catch (ResourceInUseException reInUse) {
 				if (LOG.isWarnEnabled()) {
 					// List Shards will throw an exception if stream in not in active state. Return and re-use previous state available.
 					LOG.info("The stream is currently not in active state. Reusing the older state "
-							+ "for the time being");
+						+ "for the time being");
 					break;
 				}
 			} catch (ResourceNotFoundException reNotFound) {
@@ -460,7 +437,7 @@ public class KinesisProxy implements KinesisProxyInterface {
 			} catch (ExpiredNextTokenException expiredToken) {
 				LOG.warn("List Shards has an expired token. Reusing the previous state.");
 				break;
-			} catch (SdkClientException ex) {
+			} catch (software.amazon.awssdk.core.exception.SdkClientException ex) {
 				if (retryCount < listShardsMaxRetries && isRecoverableSdkClientException(ex)) {
 					long backoffMillis = fullJitterBackoff(
 						listShardsBaseBackoffMillis, listShardsMaxBackoffMillis, listShardsExpConstant, retryCount++);
@@ -472,6 +449,21 @@ public class KinesisProxy implements KinesisProxyInterface {
 					// (otherwise would return null result and keep trying forever)
 					throw ex;
 				}
+			} catch (AwsServiceException serviceEx) {
+				//TODO: note that previously all service exceptions were treated as retryable.
+				// and also that the one other retryable, ProvisionedThroughputExceededException is now a service exception, not a client exception
+				if (retryCount < listShardsMaxRetries) {
+					long backoffMillis = fullJitterBackoff(
+						listShardsBaseBackoffMillis, listShardsMaxBackoffMillis, listShardsExpConstant, retryCount++);
+					LOG.warn("Got AwsServiceException when listing shards from stream {}. Backing off for {} millis.",
+						streamName, backoffMillis);
+					Thread.sleep(backoffMillis);
+				} else {
+					// propagate if retries exceeded or not recoverable
+					// (otherwise would return null result and keep trying forever)
+					throw serviceEx;
+				}
+
 			}
 		}
 
@@ -482,10 +474,10 @@ public class KinesisProxy implements KinesisProxyInterface {
 		// 	https://github.com/mhart/kinesalite/pull/77
 		// 	https://github.com/lyft/kinesalite/pull/4
 		if (startShardId != null && listShardsResults != null) {
-			List<Shard> shards = listShardsResults.getShards();
+			List<Shard> shards = listShardsResults.shards();
 			Iterator<Shard> shardItr = shards.iterator();
 			while (shardItr.hasNext()) {
-				if (StreamShardHandle.compareShardIds(shardItr.next().getShardId(), startShardId) <= 0) {
+				if (StreamShardHandle.compareShardIds(shardItr.next().shardId(), startShardId) <= 0) {
 					shardItr.remove();
 				}
 			}
@@ -509,44 +501,44 @@ public class KinesisProxy implements KinesisProxyInterface {
 	 *
 	 * @return the result of the describe stream operation
 	 */
-	protected DescribeStreamResult describeStream(String streamName, @Nullable String startShardId)
-			throws InterruptedException {
-		final DescribeStreamRequest describeStreamRequest = new DescribeStreamRequest();
-		describeStreamRequest.setStreamName(streamName);
-		describeStreamRequest.setExclusiveStartShardId(startShardId);
+	protected DescribeStreamResponse describeStream(String streamName, @Nullable String startShardId)
+		throws InterruptedException {
+		final DescribeStreamRequest describeStreamRequest = DescribeStreamRequest.builder()
+			.streamName(streamName)
+			.exclusiveStartShardId(startShardId)
+			.build();
 
-		DescribeStreamResult describeStreamResult = null;
+		DescribeStreamResponse describeStreamResponse = null;
 
 		// Call DescribeStream, with full-jitter backoff (if we get LimitExceededException).
 		int attemptCount = 0;
-		while (describeStreamResult == null) { // retry until we get a result
+		while (describeStreamResponse == null) { // retry until we get a result
 			try {
-				describeStreamResult = kinesisClient.describeStream(describeStreamRequest);
+				describeStreamResponse = kinesisClient.describeStream(describeStreamRequest);
 			} catch (LimitExceededException le) {
 				long backoffMillis = fullJitterBackoff(
-						describeStreamBaseBackoffMillis,
-						describeStreamMaxBackoffMillis,
-						describeStreamExpConstant,
-						attemptCount++);
+					describeStreamBaseBackoffMillis,
+					describeStreamMaxBackoffMillis,
+					describeStreamExpConstant,
+					attemptCount++);
 				LOG.warn(String.format("Got LimitExceededException when describing stream %s. "
-						+ "Backing off for %d millis.", streamName, backoffMillis));
+					+ "Backing off for %d millis.", streamName, backoffMillis));
 				Thread.sleep(backoffMillis);
 			} catch (ResourceNotFoundException re) {
 				throw new RuntimeException("Error while getting stream details", re);
 			}
 		}
 
-		String streamStatus = describeStreamResult.getStreamDescription().getStreamStatus();
-		if (!(streamStatus.equals(StreamStatus.ACTIVE.toString())
-				|| streamStatus.equals(StreamStatus.UPDATING.toString()))) {
+		StreamStatus streamStatus = describeStreamResponse.streamDescription().streamStatus();
+		if (!(streamStatus == StreamStatus.ACTIVE || streamStatus == StreamStatus.UPDATING)) {
 			if (LOG.isWarnEnabled()) {
 				LOG.warn(String.format("The status of stream %s is %s ; result of the current "
-								+ "describeStream operation will not contain any shard information.",
-						streamName, streamStatus));
+						+ "describeStream operation will not contain any shard information.",
+					streamName, streamStatus));
 			}
 		}
 
-		return describeStreamResult;
+		return describeStreamResponse;
 	}
 
 	protected static long fullJitterBackoff(long base, long max, double power, int attempt) {

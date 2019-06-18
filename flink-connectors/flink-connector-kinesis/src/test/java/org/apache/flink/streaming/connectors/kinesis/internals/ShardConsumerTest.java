@@ -30,11 +30,11 @@ import org.apache.flink.streaming.connectors.kinesis.testutils.KinesisShardIdGen
 import org.apache.flink.streaming.connectors.kinesis.testutils.TestSourceContext;
 import org.apache.flink.streaming.connectors.kinesis.testutils.TestableKinesisDataFetcher;
 
-import com.amazonaws.services.kinesis.model.HashKeyRange;
-import com.amazonaws.services.kinesis.model.Shard;
 import org.apache.commons.lang3.StringUtils;
 import org.junit.Test;
 import org.mockito.Mockito;
+import software.amazon.awssdk.services.kinesis.model.HashKeyRange;
+import software.amazon.awssdk.services.kinesis.model.Shard;
 
 import java.math.BigInteger;
 import java.util.Collections;
@@ -219,12 +219,13 @@ public class ShardConsumerTest {
 	private static StreamShardHandle getMockStreamShard(String streamName, int shardId) {
 		return new StreamShardHandle(
 			streamName,
-			new Shard()
-				.withShardId(KinesisShardIdGenerator.generateFromShardOrder(shardId))
-				.withHashKeyRange(
-					new HashKeyRange()
-						.withStartingHashKey("0")
-						.withEndingHashKey(new BigInteger(StringUtils.repeat("FF", 16), 16).toString())));
+			Shard.builder()
+				.shardId(KinesisShardIdGenerator.generateFromShardOrder(shardId))
+				.hashKeyRange(
+					HashKeyRange.builder()
+						.startingHashKey("0")
+						.endingHashKey(new BigInteger(StringUtils.repeat("FF", 16), 16).toString()).build())
+				.build());
 	}
 
 }

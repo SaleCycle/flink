@@ -28,17 +28,22 @@ import org.apache.flink.streaming.connectors.kinesis.testutils.ExactlyOnceValida
 import org.apache.flink.streaming.connectors.kinesis.testutils.KinesisShardIdGenerator;
 import org.apache.flink.streaming.connectors.kinesis.util.AWSUtil;
 
-import com.amazonaws.services.kinesis.AmazonKinesis;
-import com.amazonaws.services.kinesis.model.DescribeStreamResult;
-import com.amazonaws.services.kinesis.model.LimitExceededException;
-import com.amazonaws.services.kinesis.model.PutRecordsRequest;
-import com.amazonaws.services.kinesis.model.PutRecordsRequestEntry;
-import com.amazonaws.services.kinesis.model.PutRecordsResult;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import software.amazon.awssdk.core.SdkBytes;
+import software.amazon.awssdk.services.kinesis.KinesisClient;
+import software.amazon.awssdk.services.kinesis.model.CreateStreamRequest;
+import software.amazon.awssdk.services.kinesis.model.DeleteStreamRequest;
+import software.amazon.awssdk.services.kinesis.model.DescribeStreamRequest;
+import software.amazon.awssdk.services.kinesis.model.DescribeStreamResponse;
+import software.amazon.awssdk.services.kinesis.model.LimitExceededException;
+import software.amazon.awssdk.services.kinesis.model.MergeShardsRequest;
+import software.amazon.awssdk.services.kinesis.model.PutRecordsRequest;
+import software.amazon.awssdk.services.kinesis.model.PutRecordsRequestEntry;
+import software.amazon.awssdk.services.kinesis.model.PutRecordsResponse;
+import software.amazon.awssdk.services.kinesis.model.SplitShardRequest;
 
-import java.nio.ByteBuffer;
 import java.util.HashSet;
 import java.util.Properties;
 import java.util.Random;
@@ -75,16 +80,16 @@ public class ManualExactlyOnceWithStreamReshardingTest {
 		configProps.setProperty(ConsumerConfigConstants.AWS_SECRET_ACCESS_KEY, secretKey);
 		configProps.setProperty(ConsumerConfigConstants.AWS_REGION, region);
 		configProps.setProperty(ConsumerConfigConstants.SHARD_DISCOVERY_INTERVAL_MILLIS, "0");
-		final AmazonKinesis client = AWSUtil.createKinesisClient(configProps);
+		final KinesisClient client = AWSUtil.createKinesisClient(configProps);
 
 		// the stream is first created with 1 shard
-		client.createStream(streamName, 1);
+		client.createStream(CreateStreamRequest.builder().streamName(streamName).shardCount(1).build());
 
 		// wait until stream has been created
-		DescribeStreamResult status = client.describeStream(streamName);
+		DescribeStreamResponse status = client.describeStream(DescribeStreamRequest.builder().streamName(streamName).build());
 		LOG.info("status {}", status);
-		while (!status.getStreamDescription().getStreamStatus().equals("ACTIVE")) {
-			status = client.describeStream(streamName);
+		while (!status.streamDescription().streamStatus().equals("ACTIVE")) {
+			status = client.describeStream(DescribeStreamRequest.builder().streamName(streamName).build());
 			LOG.info("Status of stream {}", status);
 			Thread.sleep(1000);
 		}
@@ -110,7 +115,7 @@ public class ManualExactlyOnceWithStreamReshardingTest {
 			Runnable manualGenerate = new Runnable() {
 				@Override
 				public void run() {
-					AmazonKinesis client = AWSUtil.createKinesisClient(configProps);
+					KinesisClient client = AWSUtil.createKinesisClient(configProps);
 					int count = 0;
 					final int batchSize = 30;
 					while (true) {
@@ -123,18 +128,18 @@ public class ManualExactlyOnceWithStreamReshardingTest {
 									break;
 								}
 								batch.add(
-									new PutRecordsRequestEntry()
-										.withData(ByteBuffer.wrap(((i) + "-" + RandomStringUtils.randomAlphabetic(12)).getBytes(ConfigConstants.DEFAULT_CHARSET)))
-										.withPartitionKey(UUID.randomUUID().toString()));
+									PutRecordsRequestEntry.builder()
+										.data(SdkBytes.fromString(i + "-" + RandomStringUtils.randomAlphabetic(12), ConfigConstants.DEFAULT_CHARSET))
+										.partitionKey(UUID.randomUUID().toString()).build());
 							}
 							count += batchSize;
 
-							PutRecordsResult result = client.putRecords(new PutRecordsRequest().withStreamName(streamName).withRecords(batch));
+							PutRecordsResponse result = client.putRecords(PutRecordsRequest.builder().streamName(streamName).records(batch).build());
 
 							// the putRecords() operation may have failing records; to keep this test simple
 							// instead of retrying on failed records, we simply pass on a runtime exception
 							// and let this test fail
-							if (result.getFailedRecordCount() > 0) {
+							if (result.failedRecordCount() > 0) {
 								producerError.set(new RuntimeException("The producer has failed records in one of the put batch attempts."));
 								break;
 							}
@@ -166,34 +171,36 @@ public class ManualExactlyOnceWithStreamReshardingTest {
 						// first, split shard in the middle of the hash range
 						Thread.sleep(5000);
 						LOG.info("Splitting shard ...");
-						client.splitShard(
-							streamName,
-							KinesisShardIdGenerator.generateFromShardOrder(0),
-							"170141183460469231731687303715884105727");
+						client.splitShard(SplitShardRequest.builder()
+							.streamName(streamName)
+							.shardToSplit(KinesisShardIdGenerator.generateFromShardOrder(0))
+							.newStartingHashKey("170141183460469231731687303715884105727")
+							.build());
 
 						// wait until the split shard operation finishes updating ...
-						DescribeStreamResult status;
+						DescribeStreamResponse status;
 						Random rand = new Random();
 						do {
 							status = null;
 							while (status == null) {
 								// retry until we get status
 								try {
-									status = client.describeStream(streamName);
+									status = client.describeStream(DescribeStreamRequest.builder().streamName(streamName).build());
 								} catch (LimitExceededException lee) {
 									LOG.warn("LimitExceededException while describing stream ... retrying ...");
 									Thread.sleep(rand.nextInt(1200));
 								}
 							}
-						} while (!status.getStreamDescription().getStreamStatus().equals("ACTIVE"));
+						} while (!status.streamDescription().streamStatus().equals("ACTIVE"));
 
 						// then merge again
 						Thread.sleep(7000);
 						LOG.info("Merging shards ...");
 						client.mergeShards(
-							streamName,
-							KinesisShardIdGenerator.generateFromShardOrder(1),
-							KinesisShardIdGenerator.generateFromShardOrder(2));
+							MergeShardsRequest.builder()
+								.streamName(streamName)
+								.shardToMerge(KinesisShardIdGenerator.generateFromShardOrder(1))
+								.adjacentShardToMerge(KinesisShardIdGenerator.generateFromShardOrder(2)).build());
 					} catch (InterruptedException iex) {
 						//
 					}
@@ -241,8 +248,8 @@ public class ManualExactlyOnceWithStreamReshardingTest {
 			}
 
 		} finally {
-			client.deleteStream(streamName);
-			client.shutdown();
+			client.deleteStream(DeleteStreamRequest.builder().streamName(streamName).build());
+			client.close();
 
 			// stopping flink
 			flink.after();

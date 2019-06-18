@@ -40,12 +40,12 @@ import org.apache.flink.streaming.util.AbstractStreamOperatorTestHarness;
 import org.apache.flink.streaming.util.OperatorSnapshotUtil;
 import org.apache.flink.testutils.migration.MigrationVersion;
 
-import com.amazonaws.services.kinesis.model.SequenceNumberRange;
-import com.amazonaws.services.kinesis.model.Shard;
 import org.junit.Ignore;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
+import software.amazon.awssdk.services.kinesis.model.SequenceNumberRange;
+import software.amazon.awssdk.services.kinesis.model.Shard;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -119,12 +119,12 @@ public class FlinkKinesisConsumerMigrationTest {
 	public void testRestoreWithEmptyState() throws Exception {
 		final List<StreamShardHandle> initialDiscoveryShards = new ArrayList<>(TEST_STATE.size());
 		for (StreamShardMetadata shardMetadata : TEST_STATE.keySet()) {
-			Shard shard = new Shard();
-			shard.setShardId(shardMetadata.getShardId());
 
-			SequenceNumberRange sequenceNumberRange = new SequenceNumberRange();
-			sequenceNumberRange.withStartingSequenceNumber("1");
-			shard.setSequenceNumberRange(sequenceNumberRange);
+			SequenceNumberRange sequenceNumberRange = SequenceNumberRange.builder().startingSequenceNumber("1").build();
+			Shard shard = Shard.builder()
+				.shardId(shardMetadata.getShardId())
+				.sequenceNumberRange(sequenceNumberRange)
+				.build();
 
 			initialDiscoveryShards.add(new StreamShardHandle(shardMetadata.getStreamName(), shard));
 		}
@@ -162,7 +162,7 @@ public class FlinkKinesisConsumerMigrationTest {
 		// and therefore should be consumed from the earliest sequence number
 		KinesisStreamShardState restoredShardState = fetcher.getSubscribedShardsState().get(0);
 		assertEquals(TEST_STREAM_NAME, restoredShardState.getStreamShardHandle().getStreamName());
-		assertEquals(TEST_SHARD_ID, restoredShardState.getStreamShardHandle().getShard().getShardId());
+		assertEquals(TEST_SHARD_ID, restoredShardState.getStreamShardHandle().getShard().shardId());
 		assertFalse(restoredShardState.getStreamShardHandle().isClosed());
 		assertEquals(SentinelSequenceNumber.SENTINEL_EARLIEST_SEQUENCE_NUM.get(), restoredShardState.getLastProcessedSequenceNum());
 
@@ -174,12 +174,12 @@ public class FlinkKinesisConsumerMigrationTest {
 	public void testRestore() throws Exception {
 		final List<StreamShardHandle> initialDiscoveryShards = new ArrayList<>(TEST_STATE.size());
 		for (StreamShardMetadata shardMetadata : TEST_STATE.keySet()) {
-			Shard shard = new Shard();
-			shard.setShardId(shardMetadata.getShardId());
 
-			SequenceNumberRange sequenceNumberRange = new SequenceNumberRange();
-			sequenceNumberRange.withStartingSequenceNumber("1");
-			shard.setSequenceNumberRange(sequenceNumberRange);
+			SequenceNumberRange sequenceNumberRange = SequenceNumberRange.builder().startingSequenceNumber("1").build();
+			Shard shard = Shard.builder()
+				.shardId(shardMetadata.getShardId())
+				.sequenceNumberRange(sequenceNumberRange)
+				.build();
 
 			initialDiscoveryShards.add(new StreamShardHandle(shardMetadata.getStreamName(), shard));
 		}
@@ -219,7 +219,7 @@ public class FlinkKinesisConsumerMigrationTest {
 
 		KinesisStreamShardState restoredShardState = fetcher.getSubscribedShardsState().get(0);
 		assertEquals(TEST_STREAM_NAME, restoredShardState.getStreamShardHandle().getStreamName());
-		assertEquals(TEST_SHARD_ID, restoredShardState.getStreamShardHandle().getShard().getShardId());
+		assertEquals(TEST_SHARD_ID, restoredShardState.getStreamShardHandle().getShard().shardId());
 		assertFalse(restoredShardState.getStreamShardHandle().isClosed());
 		assertEquals(TEST_SEQUENCE_NUMBER, restoredShardState.getLastProcessedSequenceNum());
 
@@ -231,35 +231,36 @@ public class FlinkKinesisConsumerMigrationTest {
 	public void testRestoreWithReshardedStream() throws Exception {
 		final List<StreamShardHandle> initialDiscoveryShards = new ArrayList<>(TEST_STATE.size());
 		for (StreamShardMetadata shardMetadata : TEST_STATE.keySet()) {
-			// setup the closed shard
-			Shard closedShard = new Shard();
-			closedShard.setShardId(shardMetadata.getShardId());
 
-			SequenceNumberRange closedSequenceNumberRange = new SequenceNumberRange();
-			closedSequenceNumberRange.withStartingSequenceNumber("1");
-			closedSequenceNumberRange.withEndingSequenceNumber("1087654321"); // this represents a closed shard
-			closedShard.setSequenceNumberRange(closedSequenceNumberRange);
+			SequenceNumberRange closedSequenceNumberRange = SequenceNumberRange.builder()
+				.startingSequenceNumber("1")
+				.endingSequenceNumber("1087654321")
+				.build();
+
+			// setup the closed shard
+			Shard closedShard = Shard.builder()
+				.shardId(shardMetadata.getShardId())
+				.sequenceNumberRange(closedSequenceNumberRange)
+				.build();
 
 			initialDiscoveryShards.add(new StreamShardHandle(shardMetadata.getStreamName(), closedShard));
 
 			// setup the new shards
-			Shard newSplitShard1 = new Shard();
-			newSplitShard1.setShardId(KinesisShardIdGenerator.generateFromShardOrder(1));
 
-			SequenceNumberRange newSequenceNumberRange1 = new SequenceNumberRange();
-			newSequenceNumberRange1.withStartingSequenceNumber("1087654322");
-			newSplitShard1.setSequenceNumberRange(newSequenceNumberRange1);
+			SequenceNumberRange newSequenceNumberRange1 = SequenceNumberRange.builder().startingSequenceNumber("1087654322").build();
 
-			newSplitShard1.setParentShardId(TEST_SHARD_ID);
+			Shard newSplitShard1 = Shard.builder()
+				.shardId(KinesisShardIdGenerator.generateFromShardOrder(1))
+				.sequenceNumberRange(newSequenceNumberRange1)
+				.parentShardId(TEST_SHARD_ID)
+				.build();
 
-			Shard newSplitShard2 = new Shard();
-			newSplitShard2.setShardId(KinesisShardIdGenerator.generateFromShardOrder(2));
-
-			SequenceNumberRange newSequenceNumberRange2 = new SequenceNumberRange();
-			newSequenceNumberRange2.withStartingSequenceNumber("2087654322");
-			newSplitShard2.setSequenceNumberRange(newSequenceNumberRange2);
-
-			newSplitShard2.setParentShardId(TEST_SHARD_ID);
+			SequenceNumberRange newSequenceNumberRange2 = SequenceNumberRange.builder().startingSequenceNumber("2087654322").build();
+			Shard newSplitShard2 = Shard.builder()
+				.shardId(KinesisShardIdGenerator.generateFromShardOrder(2))
+				.sequenceNumberRange(newSequenceNumberRange2)
+				.parentShardId(TEST_SHARD_ID)
+				.build();
 
 			initialDiscoveryShards.add(new StreamShardHandle(shardMetadata.getStreamName(), newSplitShard1));
 			initialDiscoveryShards.add(new StreamShardHandle(shardMetadata.getStreamName(), newSplitShard2));
@@ -301,20 +302,20 @@ public class FlinkKinesisConsumerMigrationTest {
 
 		KinesisStreamShardState restoredClosedShardState = fetcher.getSubscribedShardsState().get(0);
 		assertEquals(TEST_STREAM_NAME, restoredClosedShardState.getStreamShardHandle().getStreamName());
-		assertEquals(TEST_SHARD_ID, restoredClosedShardState.getStreamShardHandle().getShard().getShardId());
+		assertEquals(TEST_SHARD_ID, restoredClosedShardState.getStreamShardHandle().getShard().shardId());
 		assertTrue(restoredClosedShardState.getStreamShardHandle().isClosed());
 		assertEquals(TEST_SEQUENCE_NUMBER, restoredClosedShardState.getLastProcessedSequenceNum());
 
 		KinesisStreamShardState restoredNewSplitShard1 = fetcher.getSubscribedShardsState().get(1);
 		assertEquals(TEST_STREAM_NAME, restoredNewSplitShard1.getStreamShardHandle().getStreamName());
-		assertEquals(KinesisShardIdGenerator.generateFromShardOrder(1), restoredNewSplitShard1.getStreamShardHandle().getShard().getShardId());
+		assertEquals(KinesisShardIdGenerator.generateFromShardOrder(1), restoredNewSplitShard1.getStreamShardHandle().getShard().shardId());
 		assertFalse(restoredNewSplitShard1.getStreamShardHandle().isClosed());
 		// new shards should be consumed from the beginning
 		assertEquals(SentinelSequenceNumber.SENTINEL_EARLIEST_SEQUENCE_NUM.get(), restoredNewSplitShard1.getLastProcessedSequenceNum());
 
 		KinesisStreamShardState restoredNewSplitShard2 = fetcher.getSubscribedShardsState().get(2);
 		assertEquals(TEST_STREAM_NAME, restoredNewSplitShard2.getStreamShardHandle().getStreamName());
-		assertEquals(KinesisShardIdGenerator.generateFromShardOrder(2), restoredNewSplitShard2.getStreamShardHandle().getShard().getShardId());
+		assertEquals(KinesisShardIdGenerator.generateFromShardOrder(2), restoredNewSplitShard2.getStreamShardHandle().getShard().shardId());
 		assertFalse(restoredNewSplitShard2.getStreamShardHandle().isClosed());
 		// new shards should be consumed from the beginning
 		assertEquals(SentinelSequenceNumber.SENTINEL_EARLIEST_SEQUENCE_NUM.get(), restoredNewSplitShard2.getLastProcessedSequenceNum());

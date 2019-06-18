@@ -28,10 +28,13 @@ import org.apache.flink.streaming.connectors.kinesis.testutils.ExactlyOnceValida
 import org.apache.flink.streaming.connectors.kinesis.testutils.KinesisEventsGeneratorProducerThread;
 import org.apache.flink.streaming.connectors.kinesis.util.AWSUtil;
 
-import com.amazonaws.services.kinesis.AmazonKinesis;
-import com.amazonaws.services.kinesis.model.DescribeStreamResult;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import software.amazon.awssdk.services.kinesis.KinesisClient;
+import software.amazon.awssdk.services.kinesis.model.CreateStreamRequest;
+import software.amazon.awssdk.services.kinesis.model.DeleteStreamRequest;
+import software.amazon.awssdk.services.kinesis.model.DescribeStreamRequest;
+import software.amazon.awssdk.services.kinesis.model.DescribeStreamResponse;
 
 import java.util.Properties;
 import java.util.UUID;
@@ -63,16 +66,16 @@ public class ManualExactlyOnceTest {
 		configProps.setProperty(AWSConfigConstants.AWS_ACCESS_KEY_ID, accessKey);
 		configProps.setProperty(AWSConfigConstants.AWS_SECRET_ACCESS_KEY, secretKey);
 		configProps.setProperty(AWSConfigConstants.AWS_REGION, region);
-		AmazonKinesis client = AWSUtil.createKinesisClient(configProps);
+		KinesisClient client = AWSUtil.createKinesisClient(configProps);
 
 		// create a stream for the test:
-		client.createStream(streamName, 1);
+		client.createStream(CreateStreamRequest.builder().streamName(streamName).shardCount(1).build());
 
 		// wait until stream has been created
-		DescribeStreamResult status = client.describeStream(streamName);
+		DescribeStreamResponse status = client.describeStream(DescribeStreamRequest.builder().streamName(streamName).build());
 		LOG.info("status {}" , status);
-		while (!status.getStreamDescription().getStreamStatus().equals("ACTIVE")) {
-			status = client.describeStream(streamName);
+		while (!status.streamDescription().streamStatus().equals("ACTIVE")) {
+			status = client.describeStream(DescribeStreamRequest.builder().streamName(streamName).build());
 			LOG.info("Status of stream {}", status);
 			Thread.sleep(1000);
 		}
@@ -142,8 +145,8 @@ public class ManualExactlyOnceTest {
 			}
 
 		} finally {
-			client.deleteStream(streamName);
-			client.shutdown();
+			client.deleteStream(DeleteStreamRequest.builder().streamName(streamName).build());
+			client.close();
 
 			// stopping flink
 			flink.after();

@@ -19,7 +19,7 @@ package org.apache.flink.streaming.connectors.kinesis.model;
 
 import org.apache.flink.annotation.Internal;
 
-import com.amazonaws.services.kinesis.model.Shard;
+import software.amazon.awssdk.services.kinesis.model.Shard;
 
 import java.io.Serializable;
 
@@ -28,7 +28,7 @@ import static org.apache.flink.util.Preconditions.checkNotNull;
 /**
  * A legacy serializable representation of a AWS Kinesis Stream shard.
  * It is basically a wrapper class around the information provided along
- * with {@link com.amazonaws.services.kinesis.model.Shard}.
+ * with {@link software.amazon.awssdk.services.kinesis.model.Shard}.
  *
  * @deprecated Will be remove in a future version in favor of {@link StreamShardHandle}.
  */
@@ -59,7 +59,7 @@ public class KinesisStreamShard implements Serializable {
 		// our hash doesn't need to use hash code of Amazon's description of Shards, which uses other info for calculation
 		int hash = 17;
 		hash = 37 * hash + streamName.hashCode();
-		hash = 37 * hash + shard.getShardId().hashCode();
+		hash = 37 * hash + shard.shardId().hashCode();
 		this.cachedHash = hash;
 	}
 
@@ -68,7 +68,7 @@ public class KinesisStreamShard implements Serializable {
 	}
 
 	public boolean isClosed() {
-		return (shard.getSequenceNumberRange().getEndingSequenceNumber() != null);
+		return (shard.sequenceNumberRange().endingSequenceNumber() != null);
 	}
 
 	public Shard getShard() {
@@ -112,18 +112,18 @@ public class KinesisStreamShard implements Serializable {
 		StreamShardMetadata streamShardMetadata = new StreamShardMetadata();
 
 		streamShardMetadata.setStreamName(kinesisStreamShard.getStreamName());
-		streamShardMetadata.setShardId(kinesisStreamShard.getShard().getShardId());
-		streamShardMetadata.setParentShardId(kinesisStreamShard.getShard().getParentShardId());
-		streamShardMetadata.setAdjacentParentShardId(kinesisStreamShard.getShard().getAdjacentParentShardId());
+		streamShardMetadata.setShardId(kinesisStreamShard.getShard().shardId());
+		streamShardMetadata.setParentShardId(kinesisStreamShard.getShard().parentShardId());
+		streamShardMetadata.setAdjacentParentShardId(kinesisStreamShard.getShard().adjacentParentShardId());
 
-		if (kinesisStreamShard.getShard().getHashKeyRange() != null) {
-			streamShardMetadata.setStartingHashKey(kinesisStreamShard.getShard().getHashKeyRange().getStartingHashKey());
-			streamShardMetadata.setEndingHashKey(kinesisStreamShard.getShard().getHashKeyRange().getEndingHashKey());
+		if (kinesisStreamShard.getShard().hashKeyRange() != null) {
+			streamShardMetadata.setStartingHashKey(kinesisStreamShard.getShard().hashKeyRange().startingHashKey());
+			streamShardMetadata.setEndingHashKey(kinesisStreamShard.getShard().hashKeyRange().endingHashKey());
 		}
 
-		if (kinesisStreamShard.getShard().getSequenceNumberRange() != null) {
-			streamShardMetadata.setStartingSequenceNumber(kinesisStreamShard.getShard().getSequenceNumberRange().getStartingSequenceNumber());
-			streamShardMetadata.setEndingSequenceNumber(kinesisStreamShard.getShard().getSequenceNumberRange().getEndingSequenceNumber());
+		if (kinesisStreamShard.getShard().sequenceNumberRange() != null) {
+			streamShardMetadata.setStartingSequenceNumber(kinesisStreamShard.getShard().sequenceNumberRange().startingSequenceNumber());
+			streamShardMetadata.setEndingSequenceNumber(kinesisStreamShard.getShard().sequenceNumberRange().endingSequenceNumber());
 		}
 
 		return streamShardMetadata;

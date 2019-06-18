@@ -17,7 +17,7 @@
 
 package org.apache.flink.streaming.connectors.kinesis.model;
 
-import com.amazonaws.services.kinesis.model.Shard;
+import software.amazon.awssdk.services.kinesis.model.Shard;
 
 /**
  * DynamoDB streams shard handle format and utilities.

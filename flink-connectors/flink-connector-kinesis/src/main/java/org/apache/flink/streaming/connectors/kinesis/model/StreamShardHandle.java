@@ -19,13 +19,13 @@ package org.apache.flink.streaming.connectors.kinesis.model;
 
 import org.apache.flink.annotation.Internal;
 
-import com.amazonaws.services.kinesis.model.Shard;
+import software.amazon.awssdk.services.kinesis.model.Shard;
 
 import static org.apache.flink.util.Preconditions.checkNotNull;
 
 /**
  * A wrapper class around the information provided along with streamName and
- * {@link com.amazonaws.services.kinesis.model.Shard}, with some extra utility methods to determine whether
+ * {@link software.amazon.awssdk.services.kinesis.model.Shard}, with some extra utility methods to determine whether
  * or not a shard is closed and whether or not the shard is a result of parent shard splits or merges.
  */
 @Internal
@@ -52,7 +52,7 @@ public class StreamShardHandle {
 		// our hash doesn't need to use hash code of Amazon's description of Shards, which uses other info for calculation
 		int hash = 17;
 		hash = 37 * hash + streamName.hashCode();
-		hash = 37 * hash + shard.getShardId().hashCode();
+		hash = 37 * hash + shard.shardId().hashCode();
 		this.cachedHash = hash;
 	}
 
@@ -61,7 +61,7 @@ public class StreamShardHandle {
 	}
 
 	public boolean isClosed() {
-		return (shard.getSequenceNumberRange().getEndingSequenceNumber() != null);
+		return (shard.sequenceNumberRange().endingSequenceNumber() != null);
 	}
 
 	public Shard getShard() {
