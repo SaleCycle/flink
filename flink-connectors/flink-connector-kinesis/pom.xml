@@ -36,7 +36,7 @@ under the License.
 		<aws.sdk.version>1.11.319</aws.sdk.version>
 		<aws.sdk2.version>2.5.10</aws.sdk2.version>
 		<aws.kinesis-kcl.version>2.2.0</aws.kinesis-kcl.version>
-		<aws.kinesis-kpl.version>0.12.11</aws.kinesis-kpl.version>
+		<aws.kinesis-kpl.version>0.13.0</aws.kinesis-kpl.version>
 	</properties>
 
 	<packaging>jar</packaging>
